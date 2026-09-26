@@ -1,12 +1,30 @@
 {
   "hero": {
-    "title": "Your headline goes here",
+    "title": "Sandos",
     "subtitle": "Open admin.html to change this text, add a background image, and build the containers below.",
     "image": null
   },
   "sections": [
-    {"id": "s1", "layout": "img-left", "title": "Image on the left", "text": "Each container picks a layout from a dropdown in the admin page. Upload images into the slots and write your text.\n\nLeave a blank line between paragraphs.", "images": []},
-    {"id": "s2", "layout": "two-top", "title": "Two images, text below", "text": "Containers can be reordered, deleted, or switched to a different layout at any time.", "images": []},
-    {"id": "s3", "layout": "big-stack", "title": "One big image, two small ones", "text": "Empty image slots show a placeholder until you upload something.", "images": []}
+    {
+      "id": "s1",
+      "layout": "img-left",
+      "title": "Image on the left",
+      "text": "Each container picks a layout from a dropdown in the admin page. Upload images into the slots and write your text.\n\nLeave a blank line between paragraphs.",
+      "images": []
+    },
+    {
+      "id": "s2",
+      "layout": "two-top",
+      "title": "Two images, text below",
+      "text": "Containers can be reordered, deleted, or switched to a different layout at any time.",
+      "images": []
+    },
+    {
+      "id": "s3",
+      "layout": "big-stack",
+      "title": "One big image, two small ones",
+      "text": "Empty image slots show a placeholder until you upload something.",
+      "images": []
+    }
   ]
 }
