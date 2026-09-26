@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="admin"><div class="loading">Loading…</div></div>
+<div id="toast" class="toast" hidden role="status"></div>
+<script src="site.js"></script>
+<script>
+(() => {
+"use strict";
+let draft = null, dirty = false;
+const localPreview = {};           // images uploaded this session, shown before Pages rebuilds
+const imgSrc = p => localPreview[p] || p;
+let toastT;
+const toast = m => { const t=$("#toast"); t.textContent=m; t.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>t.hidden=true,3200); };
+
+/* ---------- GitHub settings (kept in this browser only) ---------- */
+function guessRepo(){
+  const h = location.hostname;
+  if (!h.endsWith(".github.io")) return {owner:"", repo:""};
+  const owner = h.split(".")[0], seg = location.pathname.split("/").filter(Boolean)[0];
+  return {owner, repo: seg && !seg.endsWith(".html") ? seg : h};
+}
+function getCfg(){
+  let c = {};
+  try { c = JSON.parse(localStorage.getItem("gh-cfg") || "{}"); } catch {}
+  const g = guessRepo();
+  return {owner:c.owner||g.owner, repo:c.repo||g.repo, branch:c.branch||"main", token:c.token||""};
+}
+function setCfg(c){ try { localStorage.setItem("gh-cfg", JSON.stringify(c)); } catch {} }
+const cfgReady = c => c.owner && c.repo && c.token;
+
+async function gh(path, opts={}){
+  const c = getCfg();
+  const r = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}/contents/${path}` + (opts.method ? "" : `?ref=${encodeURIComponent(c.branch)}`), {
+    ...opts,
+    headers: {"Accept":"application/vnd.github+json","Authorization":"Bearer "+c.token, ...(opts.body?{"Content-Type":"application/json"}:{})}
+  });
+  if (!r.ok){ const e = new Error("GitHub " + r.status); e.status = r.status; throw e; }
+  return r.json();
+}
+const b64FromText = s => { const b = new TextEncoder().encode(s); let bin=""; for (let i=0;i<b.length;i+=0x8000) bin += String.fromCharCode(...b.subarray(i,i+0x8000)); return btoa(bin); };
+const textFromB64 = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g,"")), ch => ch.charCodeAt(0)));
+const b64FromBlob = blob => new Promise((res,rej) => { const f=new FileReader(); f.onload=()=>res(String(f.result).split(",")[1]); f.onerror=rej; f.readAsDataURL(blob); });
+async function shaOf(path){ try { return (await gh(path)).sha; } catch(e){ if (e.status===404) return undefined; throw e; } }
+async function putFile(path, base64, message){
+  const c = getCfg(), sha = await shaOf(path);
+  return gh(path, {method:"PUT", body: JSON.stringify({message, content:base64, branch:c.branch, ...(sha?{sha}:{})})});
+}
+function ghError(e){
+  if (e.status===401) return "GitHub rejected the token. Check it in GitHub settings below.";
+  if (e.status===403 || e.status===404) return "Token can't write to that repo. Check the repo name and that the token has Contents: read and write.";
+  if (e.status===409 || e.status===422) return "The file changed on GitHub meanwhile. Reload the page and try again.";
+  return "Couldn't reach GitHub. Check your connection and try again.";
+}
+
+/* ---------- Load ---------- */
+async function load(){
+  const c = getCfg();
+  if (cfgReady(c)){
+    try { const f = await gh("content.json"); return normalize(JSON.parse(textFromB64(f.content))); } catch {}
+  }
+  return loadContent();
+}
+
+/* ---------- Editor ---------- */
+function setDirty(v){
+  dirty = v;
+  const st=$("#status"), sv=$("#save");
+  if (st){ st.textContent = v ? "Unsaved changes" : "No unsaved changes"; st.classList.toggle("dirty", v); }
+  if (sv) sv.disabled = !v;
+}
+function schemHTML(key){
+  const s = LAYOUTS[key].schem;
+  const cells = [...new Set(s.areas.replace(/"/g," ").split(/\s+/).filter(Boolean))];
+  return `<div class="schem" style="grid-template-columns:${s.cols};grid-template-areas:${s.areas};${s.rows?`grid-template-rows:${s.rows}`:""}">`
+    + cells.map(c => c==="t" ? `<b style="grid-area:t"></b>` : `<i style="grid-area:${c}"></i>`).join("") + `</div>`;
+}
+function slotHTML(img, si, k){
+  return `<div class="slot" data-slot="${si}:${k}">
+    ${img ? `<img src="${esc(imgSrc(img))}" alt="Image ${k+1}">` : `<div class="ph">Image ${k+1}<br>not set</div>`}
+    <div class="acts"><button class="btn" data-act="upload">${img?"Replace":"Upload"}</button>
+    ${img?`<button class="btn danger" data-act="clear" aria-label="Remove image ${k+1}">Remove</button>`:""}</div></div>`;
+}
+function draw(){
+  const d = draft, c = getCfg();
+  const opts = key => Object.entries(LAYOUTS).map(([k,v]) => `<option value="${k}"${k===key?" selected":""}>${esc(v.label)}</option>`).join("");
+  const secs = d.sections.map((s,i) => {
+    const L = LAYOUTS[s.layout];
+    return `<div class="panel" data-sec="${i}">
+      <div class="panel-head"><h2>Container ${i+1}</h2>
+        <button class="btn icon" data-act="up" ${i===0?"disabled":""} aria-label="Move up">↑</button>
+        <button class="btn icon" data-act="down" ${i===d.sections.length-1?"disabled":""} aria-label="Move down">↓</button>
+        <button class="btn danger" data-act="del">Delete</button></div>
+      <div class="layout-row"><label class="f"><span>Layout</span><select data-field="layout">${opts(s.layout)}</select></label>${schemHTML(s.layout)}</div>
+      ${L.n ? `<div class="slots">${Array.from({length:L.n},(_,k)=>slotHTML(s.images[k],i,k)).join("")}</div>` : ""}
+      <label class="f"><span>Heading</span><input type="text" data-field="title" value="${esc(s.title)}"></label>
+      <label class="f"><span>Text</span><textarea data-field="text">${esc(s.text)}</textarea></label>
+      <p class="hint">Leave a blank line between paragraphs.</p></div>`;
+  }).join("");
+  $("#app").innerHTML = `
+    <div class="bar"><div class="bar-inner"><h1>Site admin</h1>
+      <span class="status" id="status"></span>
+      <a class="btn" href="./">View site</a>
+      <button class="btn primary" id="save" disabled>Save changes</button></div></div>
+    <div class="wrap">
+      ${cfgReady(c) ? "" : `<div class="panel"><h2>Connect to GitHub to save</h2><p class="hint" style="margin:0">Fill in the GitHub settings at the bottom of this page. Until then, you can still edit and use “Download content.json”.</p></div>`}
+      <div class="panel"><h2>Hero banner</h2>
+        <label class="f"><span>Headline</span><input type="text" data-hero-field="title" value="${esc(d.hero.title)}"></label>
+        <label class="f"><span>Subtitle</span><input type="text" data-hero-field="subtitle" value="${esc(d.hero.subtitle)}"></label>
+        <span class="hint" style="display:block;margin:0 0 .3rem">Background image (optional)</span>
+        <div class="slots">${slotHTML(d.hero.image,"hero",0)}</div></div>
+      ${secs || `<div class="panel empty-note">No containers yet. Add one to start building the page.</div>`}
+      <div class="add-row"><button class="btn primary" id="add">Add container</button></div>
+      <div class="panel"><h2>GitHub settings</h2>
+        <p class="hint" style="margin:0 0 1rem">Saved in this browser only. Changes go live about a minute after saving, once GitHub Pages rebuilds.</p>
+        <div class="settings-grid">
+          <label class="f"><span>Owner (your username)</span><input type="text" id="c-owner" value="${esc(c.owner)}"></label>
+          <label class="f"><span>Repository</span><input type="text" id="c-repo" value="${esc(c.repo)}"></label>
+          <label class="f"><span>Branch</span><input type="text" id="c-branch" value="${esc(c.branch)}"></label>
+          <label class="f"><span>Access token</span><input type="password" id="c-token" value="${esc(c.token)}" autocomplete="off"></label>
+        </div>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+          <button class="btn" id="c-save">Save settings</button>
+          <button class="btn" id="download">Download content.json</button>
+        </div></div>
+    </div>`;
+  setDirty(dirty);
+}
+
+function setImage(si, k, path){
+  if (si==="hero") draft.hero.image = path; else draft.sections[+si].images[k] = path;
+  setDirty(true);
+}
+async function shrink(file){
+  if (file.type==="image/gif" || file.size < 1.5e6) return file;
+  try {
+    const bmp = await createImageBitmap(file), sc = Math.min(1, 2400/Math.max(bmp.width,bmp.height));
+    const cv = document.createElement("canvas"); cv.width=Math.round(bmp.width*sc); cv.height=Math.round(bmp.height*sc);
+    cv.getContext("2d").drawImage(bmp,0,0,cv.width,cv.height);
+    const out = await new Promise(r => cv.toBlob(r, "image/jpeg", .86));
+    return out && out.size < file.size ? out : file;
+  } catch { return file; }
+}
+function pickImage(slotEl, si, k){
+  if (!cfgReady(getCfg())){ toast("Add your GitHub settings first. Images are uploaded to your repo."); $("#c-owner")?.scrollIntoView(); return; }
+  const inp = document.createElement("input");
+  inp.type="file"; inp.accept="image/png,image/jpeg,image/webp,image/gif";
+  inp.onchange = async () => {
+    const file = inp.files?.[0]; if (!file) return;
+    slotEl.classList.add("busy");
+    try {
+      const blob = await shrink(file);
+      const ext = blob.type==="image/jpeg" ? "jpg" : (blob.type.split("/")[1] || "jpg").replace("jpeg","jpg");
+      const base = (file.name.replace(/\.[^.]+$/,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").slice(0,40) || "image");
+      const path = `images/${base}-${Date.now().toString(36)}.${ext}`;
+      await putFile(path, await b64FromBlob(blob), `Upload ${path}`);
+      localPreview[path] = URL.createObjectURL(blob);
+      setImage(si, k, path); draw(); toast("Image uploaded. Save changes to show it on the site.");
+    } catch(e){ slotEl.classList.remove("busy"); toast(e.status ? ghError(e) : "Upload failed. Try a JPG, PNG or WebP."); }
+  };
+  inp.click();
+}
+async function save(){
+  const btn=$("#save");
+  if (!cfgReady(getCfg())){ toast("Add your GitHub settings to save, or use Download content.json."); return; }
+  btn.disabled=true; btn.textContent="Saving…";
+  const body = JSON.parse(JSON.stringify(draft));
+  body.sections.forEach(s => s.images = s.images.slice(0, LAYOUTS[s.layout].n));
+  try {
+    await putFile("content.json", b64FromText(JSON.stringify(body, null, 2)+"\n"), "Update site content");
+    setDirty(false); toast("Saved. The site updates in about a minute.");
+  } catch(e){ btn.disabled=false; toast(ghError(e)); }
+  btn.textContent="Save changes";
+}
+
+/* ---------- Events ---------- */
+const app = $("#app");
+app.addEventListener("input", e => {
+  const t = e.target;
+  if (t.dataset.heroField){ draft.hero[t.dataset.heroField] = t.value; setDirty(true); return; }
+  const sec = t.closest("[data-sec]"), f = t.dataset.field;
+  if (sec && f && f!=="layout"){ draft.sections[+sec.dataset.sec][f] = t.value; setDirty(true); }
+});
+app.addEventListener("change", e => {
+  if (e.target.dataset.field === "layout"){
+    draft.sections[+e.target.closest("[data-sec]").dataset.sec].layout = e.target.value; setDirty(true); draw();
+  }
+});
+app.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.id==="save") return save();
+  if (b.id==="add"){ draft.sections.push({id:uid(),layout:"img-left",title:"",text:"",images:[]}); setDirty(true); draw(); return; }
+  if (b.id==="c-save"){
+    setCfg({owner:$("#c-owner").value.trim(), repo:$("#c-repo").value.trim(), branch:$("#c-branch").value.trim()||"main", token:$("#c-token").value.trim()});
+    toast("GitHub settings saved in this browser."); draw(); return;
+  }
+  if (b.id==="download"){
+    const url = URL.createObjectURL(new Blob([JSON.stringify(draft,null,2)+"\n"],{type:"application/json"}));
+    const a = Object.assign(document.createElement("a"),{href:url,download:"content.json"}); a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); return;
+  }
+  const act = b.dataset.act; if (!act) return;
+  const slot = b.closest("[data-slot]");
+  if (slot){
+    const [si,k] = slot.dataset.slot.split(":");
+    if (act==="upload") return pickImage(slot, si, +k);
+    if (act==="clear"){ setImage(si,+k,null); draw(); return; }
+  }
+  const sec = b.closest("[data-sec]"); if (!sec) return;
+  const i = +sec.dataset.sec, arr = draft.sections;
+  if (act==="up" && i>0) [arr[i-1],arr[i]]=[arr[i],arr[i-1]];
+  else if (act==="down" && i<arr.length-1) [arr[i+1],arr[i]]=[arr[i],arr[i+1]];
+  else if (act==="del"){ if (!confirm(`Delete container ${i+1}?`)) return; arr.splice(i,1); }
+  else return;
+  setDirty(true); draw();
+});
+window.addEventListener("beforeunload", e => { if (dirty){ e.preventDefault(); e.returnValue=""; } });
+
+load().then(c => { draft = c; draw(); })
+  .catch(() => { draft = normalize(null); draw(); toast("Couldn't load content.json. Starting empty."); });
+})();
+</script>
+</body>
+</html>
