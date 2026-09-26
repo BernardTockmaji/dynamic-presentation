@@ -13,7 +13,7 @@ All text and layout lives in `content.json`. Images live in `images/`.
 2. Click **Add file → Upload files**, drag in everything from this folder (including the `images` folder), and commit.
 3. Go to **Settings → Pages**. Under "Build and deployment", pick **Deploy from a branch**, choose `main` and `/ (root)`, and save.
 4. After a minute or two your site is live at `https://YOUR-USERNAME.github.io/my-presentation/`.
-   The editor is at `https://YOUR-USERNAME.github.io/my-presentation/admin.html`.
+   The editor is at [`https://YOUR-USERNAME.github.io/my-presentation/admin.html`.](https://bernardtockmaji.github.io/dynamic-presentation/)
 
 ## Let the admin page save changes
 
