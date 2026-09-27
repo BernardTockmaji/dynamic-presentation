@@ -25,6 +25,13 @@
       "title": "One big image, two small ones",
       "text": "Empty image slots show a placeholder until you upload something.",
       "images": []
+    },
+    {
+      "id": "s04mqugfd",
+      "layout": "three-row",
+      "title": "",
+      "text": "",
+      "images": []
     }
   ]
 }
